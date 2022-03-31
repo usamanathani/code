@@ -7,16 +7,16 @@
 #include <time.h>
 #include <semaphore.h>
 
-
-int mailbox_size = 1024;
+int mailbox_size = 32;
 sem_t sem_thread1, sem_thread2;
+pthread_mutex_t lock;
 
 struct msg 
 {
 	int event; 
 	int val;
 	int id;
-	sem_t sem_thread;
+	sem_t semt;	
 };
 
  
@@ -28,88 +28,91 @@ struct mailbox
 	struct msg data;
 	int head;
 	int tail;
-	pthread_mutex_t lock;
-
 };
 
+void get_time()
+{
+	time_t c_time;
+	char* ctimestr;
+	c_time = time(NULL);
+	ctimestr = ctime(&c_time);
+	printf("Time: %s \n", ctimestr);
+
+}
 
 void msg_send(struct mailbox *mbx_s)
-{	
+{	int ret;
 
-	pthread_mutex_lock(&lock);
 	struct mailbox *mailbox_s = (struct mailbox *)mbx_s;
-	mailbox_s->buffer[mailbox_s->tail] = mailbox_s->data;
-	mailbox_s->total = mailbox_s->total + 1;
-	mailbox_s->count = mailbox_s->count + 1;
-	printf("Message Sent! Event:%d Val:%d ID:%d Total:%d\n", mailbox_s->data.event,mailbox_s->data.val,mailbox_s->data.id, mailbox_s->total);
-	mailbox_s->tail = mailbox_s->tail + 1;
-	if(mailbox_s->tail == 32)
-		mailbox_s->tail = 0;
-	pthread_mutex_unlock(&lock);
+	ret = sem_init(&mailbox_s->data.semt, 0, 1);
+	while(pthread_mutex_trylock(&lock) != 0)
+	{
+		
+		mailbox_s->buffer[mailbox_s->tail] = mailbox_s->data;
+		mailbox_s->total = mailbox_s->total + 1;
+		mailbox_s->count = mailbox_s->count + 1;
+		printf("Message Sent! -> Event:%d Val:%d ID:%d Total:%d\n", mailbox_s->data.event,mailbox_s->data.val,mailbox_s->data.id, mailbox_s->total);
+		mailbox_s->tail = mailbox_s->tail + 1;
+		if(mailbox_s->tail == 32)
+			mailbox_s->tail = 0;
+		
+		pthread_mutex_unlock(&lock);
+	}
+	sem_wait(&mailbox_s->data.semt);
+}
 
-
-
-}	
 
 void *thread1(void *th)
 {
 	struct mailbox *mailbox_t = (struct mailbox *)th;
+
 	while(mailbox_t->count < mailbox_size)
 	{	
-		if(mailbox_t->ack1 == 1)
-		{
-			usleep(100000);
-			struct msg data_send;
+		usleep(100000);
+		struct msg data_send;
 
-			data_send.event = 1;
-			data_send.ack = 0;
-			data_send.val = rand() % 100 + 1;
-			data_send.id = mailbox_t->total + 1;
-			mailbox_t->data = data_send;
-			msg_send(mailbox_t);
-			mailbox_t->ack1 = 0;
-		}		
-	
+		data_send.event = 1;
+		data_send.val = rand() % 100 + 1;
+		data_send.id = mailbox_t->total + 1;
+		data_send.semt = sem_thread1;
+		mailbox_t->data = data_send;
+		msg_send(mailbox_t);
+		
 	}	
 
 }
 
+
 void *thread2(void *th)
 {
-
 	struct mailbox *mailbox_t = (struct mailbox *)th;
 	while(mailbox_t->count < mailbox_size)
-	{
-		if(mailbox_t->ack2 == 1)
-		{	
-			usleep(110000);
-			struct msg data_send;
+	{	
+		usleep(110000);
+		struct msg data_send;
 
-			data_send.event = 2;
-			data_send.ack = 0;
-			data_send.val = rand() % 100 + 1;
-			data_send.id = mailbox_t->total + 1;
-			mailbox_t->data = data_send;
-			msg_send(mailbox_t);
-			mailbox_t->ack2 = 0;
-		}	
-	}
-}	
+		data_send.event = 2;
+		data_send.val = rand() % 100 + 1;
+		data_send.id = mailbox_t->total + 1;
+		data_send.semt = sem_thread2;
+		mailbox_t->data = data_send;
+		msg_send(mailbox_t);
+		
+	}	
 
-
-
+}
 
 void rec_event(struct msg data_r)
 {
 	printf("Recieved Event! Event:%d Val:%d ID:%d", data_r.event, data_r.val, data_r.id);
 }
 
+
 void *thread3(void *th)
 {
 	struct mailbox *mailbox_r = (struct mailbox *)th;
-	int rcount = 0;
-	int ack;
 
+	int rcount = 0;
 	while(mailbox_r->count < mailbox_size)
 	{	
 		while(rcount < mailbox_r->total)
@@ -123,19 +126,16 @@ void *thread3(void *th)
 			if(mailbox_r->head == 32)
 				mailbox_r->head = 0;
 
-			if(data_rec.event == 1)
-				mailbox_r->ack1 = 1;
-			else
-				mailbox_r->ack2 = 1;
-
 			rec_event(data_rec);
+			sem_post(&data_rec.semt);
+			
 			printf(" Total:%d \n", mailbox_r->total);
+			get_time();
 			rcount = rcount + 1;
 		}
-	}
-	
+	}	
+		
 }
-
 
 void main()
 {
@@ -145,15 +145,11 @@ void main()
 	srand(time(NULL));
 	pthread_mutex_init(&lock, NULL);
 
-
 	struct mailbox *mailbox_m = (struct mailbox *)malloc(sizeof(struct mailbox));
 	mailbox_m->tail = 0;
 	mailbox_m->head = 0;
 	mailbox_m->total = 0;
 	mailbox_m->count = 0;
-	mailbox_m->ack1 = 1;
-	mailbox_m->ack2 = 1;
-	
 	
 	rc = pthread_create(&s_thread1, NULL, thread1, mailbox_m);
 	rc = pthread_create(&s_thread2, NULL, thread2, mailbox_m);
@@ -163,11 +159,5 @@ void main()
 	rc = pthread_join(r_thread3, NULL);
 
 	free(mailbox_m);
-
-	// if(mailbox_m->head == mailbox_size)
-	// 	mailbox_m->head = 0;
-	// if(mailbox_m->tail == mailbox_size)
-	// 	mailbox_m->tail = 0;
-
 
 }
