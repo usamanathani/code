@@ -3,7 +3,7 @@
 1. Thread 1 and Thread 2 Send Messages to Mailbox (Buffer)
 2. Thread 1 Send Message containing "Event1" every 100ms, Thread 2, "Event2", every 110ms
 3. Thread 3 receives Messages from Mailbox. If Event 1 is received, it is printed with its timestamp. 
-4. If Thread 1 executes, it will not send another message until ack, which is when the thread Event is printed with timestamp. 
+
 
 */
 
@@ -16,8 +16,10 @@
 #include <sys/time.h>
 #include <time.h>
 
-clock_t start_time; // Start time of Program to baseline get_time()
-int addr = 0;  // Global buffer counter
+clock_t start_time;
+int addr  = 0;
+
+
 
 
 void delay(int milli)
@@ -54,17 +56,17 @@ struct msg
 
 struct mailbox 
 {
-	struct msg buffer[32]; // 0 --> 31
+	struct msg buffer[32]; // Mailbox message buffer
 	int ack1;  // to handle two threads simultaneously
 	int ack2;
-	int busy;
-	int m_count; // mailbox count 
+	int m_count; // number of messages in mailbox
+
 };
 
 struct mail_data
 {	
-	struct msg *msg_d;
-	struct mailbox *mailbox_d;
+	struct msg msg_d;
+	struct mailbox mailbox_d;
 };
 
 
@@ -72,111 +74,66 @@ void *msg_send(void *md)
 {
 	struct mail_data *args = (struct mail_data *)md;
 
-	struct msg msg_s = args->msg_d;
-	struct mailbox mb_s = args-> mailbox_d;
-	mb_s.buffer[addr] = args->msg_d;
-	addr = addr + 1;
 
-	printf("Sent Message! (Event%d)", msg_s.event);
-	get_time(2);
-	printf("Mailbox count: %d \n", mb_s.m_count);
-
-}
-
-void event1(struct mail_data maildata)
-{
-	printf("Event 1 has been processed");
-	get_time(2);
-	maildata.mailbox_d.ack1 = 1;
-}
-
-void event2(struct mail_data maildata)
-{
-	printf("Event 2 has been processed");
-	get_time(2);
-	maildata.mailbox_d.ack2 = 1;
-}
-
-void *msg_rec(void *md)
-{
-	struct mail_data *args = (struct mail_data *)md;
-	struct msg msg_s = args->msg_d;
-	struct mailbox mb_s = args-> mailbox_d;
-
-	int output_event;
-
-	output_event = mb_s.buffer[addr].event;
-	addr = addr - 1;
-
-	if(mb_s.busy != 1)
+	if(args->mailbox_d.m_count > 32)
+		delay(10);
+	else
 	{
-		if(output_event == 1)
-		{
-			event1(*args);
-			mb_s.busy = 1;
-			printf("Mailbox count: %d \n", args->mailbox_d.m_count);
-		}
-		else if(output_event == 2)
-		{
-			event2(*args);
-			mb_s.busy = 1;
-			printf("Mailbox count: %d \n", mb_s.m_count);
-		}
+		args->mailbox_d.m_count = args->mailbox_d.m_count + 1;
+		args->mailbox_d.buffer[addr] = args->msg_d;
+		addr = addr + 1;
+		printf("Sent Message! (Event%d) (Mailbox Count: %d)", args->msg_d.event,args->mailbox_d.m_count);
+		get_time(2);
 	}
 }
 
-void create_event(struct mail_data *maildata, int event_type) 
+void create_event(struct mail_data *maildata, int event_type, int ms_delay) //msg_send must be ptr
 {
 	int rc;
-	maildata.msg_d.event = event_type;
-	maildata.msg_d.ack = 0;
-	maildata.mailbox_d.buffer[addr] = maildata.msg_d; // Need global variable buffer counter
-	
 
-	rc = pthread_create(maildata.msg_d.thread, NULL, msg_send, (void *) &maildata);
+	struct msg data;
 
-}
+	data.event = event_type;
+	data.ack = 0;
+	delay(ms_delay);
+	maildata->msg_d = data;
+	 
+	rc = pthread_create(&maildata->msg_d.thread, NULL, msg_send, maildata);
 
-
-
-void rec_event(struct mail_data maildata)
-{	
-	if(maildata.mailbox_d.m_count != 0 )
-	{
-		int rc;
-
-		rc = pthread_create(&maildata.msg_d.thread, NULL, msg_rec, (void *) &maildata);
-	}
 }
 
 
 
 void main()
 {		
+	start_time = clock();
 	
-	struct mail_data *mdx = malloc(sizeof struct maildata);
-	mdx->mailbox_d.m_count = 0; // Initializing number of messages in mailbox.
+	struct mail_data *maildata = (struct mail_data *)malloc(sizeof(struct mail_data));
+
+
+
+	
+	maildata->mailbox_d.m_count = 0;
+
 	
 	
 	get_time(1); //Start
 	for(int i=0; i<10; i++)
 	{	
-		delay(100);
-		create_event(mdx, 1);
-		pthread_join(mdx->msg_d.thread, NULL);
-		delay(10);
-		create_event(mdx, 2);
-		pthread_join(mdx->msg_d.thread, NULL);
-			
-		rec_event(*mdx);
+		
+		create_event(maildata, 1, 100);
+		pthread_join(maildata->msg_d.thread, NULL);
+		create_event(maildata, 2, 10);
+		pthread_join(maildata->msg_d.thread, NULL);
+		
 	}
-
 	get_time(1); // End
-	
-	
-	
-	free(mdx);
-}
+	printf("Final Address of addr: %d\n", addr);
+	for(int i=0; i<20; i++)
+	{
+		printf("Buffer[%d] = Event%d\n",i,maildata->mailbox_d.buffer[i].event);
+	}
+}	
 
 
 
