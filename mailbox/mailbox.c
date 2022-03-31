@@ -49,20 +49,18 @@ void msg_send(struct mailbox *mbx_s, struct msg *data_send)
 
 	struct mailbox *mailbox_s = (struct mailbox *)mbx_s;
 	struct msg *data_sendx = (struct msg *) data_send;
+
+	pthread_mutex_lock(&lock);
+	mailbox_s->buffer[mailbox_s->tail] = *data_sendx;
+	mailbox_s->total = mailbox_s->total + 1;
+	printf("Message Sent! -> Event:%d Val:%d ID:%d Total:%d\n", data_sendx->event,data_sendx->val,data_sendx->id, mailbox_s->total);
+	mailbox_s->count = mailbox_s->count + 1;
+	mailbox_s->tail = mailbox_s->tail + 1;
+	if(mailbox_s->tail == MAILBOX_SIZE)
+		mailbox_s->tail = 0;
 	
-	//while(pthread_mutex_trylock(&lock) != 0)
-	{
-		pthread_mutex_lock(&lock);
-		mailbox_s->buffer[mailbox_s->tail] = *data_sendx;
-		mailbox_s->total = mailbox_s->total + 1;
-		printf("Message Sent! -> Event:%d Val:%d ID:%d Total:%d\n", data_sendx->event,data_sendx->val,data_sendx->id, mailbox_s->total);
-		mailbox_s->count = mailbox_s->count + 1;
-		mailbox_s->tail = mailbox_s->tail + 1;
-		if(mailbox_s->tail == MAILBOX_SIZE)
-			mailbox_s->tail = 0;
-		
-		pthread_mutex_unlock(&lock);
-	}
+	pthread_mutex_unlock(&lock);
+
 	
 }
 
@@ -103,10 +101,15 @@ void *thread2(void *th)
 	}	
 }
 
-void rec_event(struct msg data_r, struct mailbox *mbx)
+void rec_event(struct mailbox *mbx)
 {	
-	printf("Recieved Event! Event:%d Val:%d ID:%d Total:%d \n", data_r.event, data_r.val, data_r.id, mbx->total);
+	struct msg data_rec = mbx->buffer[mbx->head];
+	printf("Recieved Event! Event:%d Val:%d ID:%d Total:%d \n", data_rec.event, data_rec.val, data_rec.id, mbx->total);
 	get_time();
+	mbx->head = mbx->head + 1;
+	mbx->count = mbx->count - 1;
+	if(mbx->head == MAILBOX_SIZE)
+		mbx->head = 0;
 }
 
 
@@ -117,24 +120,20 @@ void *thread3(void *th)
 
 	int rcount = 0;
 	
-	while(mailbox_r->count < MAILBOX_SIZE)
+	while(1)
 	{	
 		while(rcount < mailbox_r->total)
 		{	
 			pthread_mutex_lock(&lock);	
 			data_rec = mailbox_r->buffer[mailbox_r->head];
 			rcount = rcount + 1;
-			rec_event(data_rec, mailbox_r);
+			rec_event(mailbox_r);
 
 			if(data_rec.event == 1)
 				sem_post(&sem_thread1);
 			else if(data_rec.event ==2)
 				sem_post(&sem_thread2);
 
-			mailbox_r->head = mailbox_r->head + 1;
-			mailbox_r->count = mailbox_r->count  - 1;
-			if(mailbox_r->head == 32)
-				mailbox_r->head = 0;
 			pthread_mutex_unlock(&lock);									
 		}
 	}	
